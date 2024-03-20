@@ -2,14 +2,14 @@
 import numpy as np
 from beartype.cave import IntType
 from beartype.typing import Optional
+from bofire.data_models.domain.api import Domain
 
 from ...forest import AlfalfaNode, AlfalfaTree, DecisionNode
-from ...utils.space import Space
 
 
 class Data:
-    def __init__(self, space: Space, X: np.ndarray):
-        self.space = space
+    def __init__(self, domain: Domain, X: np.ndarray):
+        self.domain = domain
         self.X = np.asarray(X)  # (N, D)
 
     def get_init_prior(self):
@@ -43,7 +43,7 @@ class Data:
     def valid_split_features(self, x_index: np.ndarray):
         valid = [
             i
-            for i in range(len(self.space))
+            for i in range(len(self.domain.inputs))
             if len(self.unique_split_values(x_index, i)) >= 1
         ]
         return np.array(valid)

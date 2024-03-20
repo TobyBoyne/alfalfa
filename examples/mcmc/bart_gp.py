@@ -3,6 +3,7 @@ import numpy as np
 import scienceplots  # noqa: F401
 import scipy.stats as stats
 import torch
+from bofire.benchmarks.api import Branin
 from matplotlib import pyplot as plt
 from matplotlib.gridspec import GridSpec
 
@@ -24,16 +25,15 @@ bb_func = map_benchmark("branin")
 torch.manual_seed(42)
 np.random.seed(42)
 
-init_data = bb_func.get_init_data(30, rnd_seed=42)
-space = bb_func.get_space()
-X, y = init_data
+benchmark = Branin()
+X = benchmark.domain.inputs.sample(10)
+y = benchmark.f(X)["y"]
 
 train_x, train_y = np.asarray(X), np.asarray(y)
-# train_y = np.zeros_like(train_y) + np.random.randn(*train_y.shape) * 0.0
 
-tree = AlfalfaForest(height=0, num_trees=50)
-data = Data(space, train_x)
-tree.initialise(space, data.get_init_prior())
+tree = AlfalfaForest(height=0, num_trees=10)
+data = Data(benchmark.domain, train_x)
+tree.initialise(benchmark.domain, data.get_init_prior())
 likelihood = gpytorch.likelihoods.GaussianLikelihood(
     noise_constraint=gpytorch.constraints.Positive()
 )
@@ -83,13 +83,9 @@ ax_hyper.set_xlabel("Iteration #")
 # GP
 idx = np.argmin(mlls)
 
-forest_dict = samples[idx]["covar_module.base_kernel._extra_state"]["tree_model"]
-forest = AlfalfaForest.from_dict(forest_dict)
-forest.initialise(space)
-model = AlfalfaGP(torch.tensor(train_x), torch.tensor(train_y), likelihood, forest)
+best_sample = samples[idx]
+model.load_state_dict(best_sample)
 model.eval()
-model.likelihood.noise = noise[idx]
-model.covar_module.outputscale = scale[idx]
 
 torch.save(model.state_dict(), "models/branin_bart_gp.pt")
 

@@ -2,8 +2,8 @@ import abc
 
 import numpy as np
 from beartype.typing import Callable, Optional, Sequence
-
-from .utils.space import Space
+from bofire.data_models.domain.api import Domain
+from bofire.data_models.features.api import CategoricalInput
 
 InitFuncType = Optional[Callable[["DecisionNode"], None]]
 
@@ -54,8 +54,12 @@ class AlfalfaNode:
         return []
 
     @property
-    def space(self):
-        return self.tree.space
+    def domain(self):
+        return self.tree.domain
+
+    @property
+    def cat_idx(self):
+        return self.tree.cat_idx
 
     def initialise(self, depth, *args):
         self.depth = depth
@@ -178,8 +182,7 @@ class DecisionNode(AlfalfaNode):
             return np.full((x.shape[0],), self.left(x))
 
         var = x[:, self.var_idx]
-
-        if self.var_idx in self.space.cat_idx:
+        if self.var_idx in self.cat_idx:
             # categorical - check if value is in subset
             return np.where(np.isin(var, self.threshold), self.left(x), self.right(x))
         else:
@@ -250,10 +253,15 @@ class AlfalfaTree:
             self.root._set_child_data(self.root.left)
             self.root._set_child_data(self.root.right)
 
-        self.space: Optional[Space] = None
+        self._domain: Domain = None
+        self._cat_idx: set = None
 
-    def initialise(self, space: Space, init_func: InitFuncType = None):
-        self.space = space
+    def initialise(self, domain: Domain, init_func: InitFuncType = None):
+        self._domain = domain
+        cat_idx_keys = domain.inputs.get_keys(includes=CategoricalInput)
+        self._cat_idx = [
+            i for i, key in enumerate(domain.inputs.get_keys()) if key in cat_idx_keys
+        ]
         self.root.initialise(0, init_func)
 
     def _get_nodes_by_depth(self) -> dict[int, list[AlfalfaNode]]:
@@ -290,6 +298,18 @@ class AlfalfaTree:
     def structure_eq(self, other: "AlfalfaTree"):
         return self.root.structure_eq(other.root)
 
+    @property
+    def domain(self):
+        if self._domain is None:
+            raise ValueError("You must first initialise the forest.")
+        return self._domain
+
+    @property
+    def cat_idx(self):
+        if self.cat_idx is None:
+            raise ValueError("You must first initialise the forest.")
+        return self.cat_idx
+
     def as_dict(self):
         return {"tree_model_type": "tree", "root": self.root.as_dict()}
 
@@ -309,10 +329,12 @@ class AlfalfaForest:
         else:
             self.trees = [AlfalfaTree(height) for _ in range(num_trees)]
 
-    def initialise(self, space: Space, init_func: InitFuncType = None):
-        self.space = space
+        self._domain: Domain = None
+
+    def initialise(self, domain: Domain, init_func: InitFuncType = None):
+        self._domain = domain
         for tree in self.trees:
-            tree.initialise(space, init_func)
+            tree.initialise(domain, init_func)
 
     def gram_matrix(self, x1: np.ndarray, x2: np.ndarray):
         x1_leaves = np.stack([tree(x1) for tree in self.trees], axis=-1)
@@ -327,6 +349,12 @@ class AlfalfaForest:
             tree.structure_eq(other_tree)
             for tree, other_tree in zip(self.trees, other.trees)
         )
+
+    @property
+    def domain(self):
+        if self._domain is None:
+            raise ValueError("You must first initialise the forest.")
+        return self._domain
 
     def as_dict(self):
         return {
