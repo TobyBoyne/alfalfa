@@ -1,9 +1,11 @@
 import abc
 
 import numpy as np
+from beartype.cave import IntType
 from beartype.typing import Callable, Optional, Sequence
 from bofire.data_models.domain.api import Domain
 from bofire.data_models.features.api import CategoricalInput
+from jaxtyping import Float, Int, Shaped
 
 InitFuncType = Optional[Callable[["DecisionNode"], None]]
 
@@ -18,20 +20,6 @@ def _leaf_id_iter():
 _leaf_id = _leaf_id_iter()
 
 
-# def prune_tree_hook(module, incompatible_keys):
-#     """Post hook for load_state_dict to handle missing nodes.
-
-#     This transforms any nodes that are missing data to leaves, effectively
-#     'pruning' branches of the tree. This function is to be used as a pre-hook
-#     for torch.load_state_dict, must be registered before loading the data."""
-
-#     while incompatible_keys.missing_keys:
-#         key = incompatible_keys.missing_keys.pop()
-#         *parent_key, child, _ = key.split(".")
-#         parent_node = attrgetter(".".join(parent_key))(module)
-#         setattr(parent_node, child, LeafNode())
-
-
 class AlfalfaNode:
     """ """
 
@@ -41,7 +29,7 @@ class AlfalfaNode:
         self.parent: Optional[tuple[DecisionNode, str]] = None
         self.tree: Optional[AlfalfaTree] = None
 
-    def contains_leaves(self, leaves: np.ndarray):
+    def contains_leaves(self, leaves: Int[np.ndarray, "N"]) -> Shaped[np.ndarray, "N"]:
         return np.isin(leaves, self.child_leaves)
 
     @abc.abstractmethod
@@ -106,7 +94,7 @@ class LeafNode(AlfalfaNode):
     def child_leaves(self):
         return [self.leaf_id]
 
-    def __call__(self, _x):
+    def __call__(self, _x: Shaped[np.ndarray, "N D"]) -> IntType:
         return self.leaf_id
 
     def structure_eq(self, other):
@@ -120,7 +108,7 @@ class DecisionNode(AlfalfaNode):
     def __init__(
         self,
         var_idx=None,
-        threshold=None,
+        threshold: Optional[float | Shaped[np.ndarray, "T"]] = None,
         left: Optional["AlfalfaNode"] = None,
         right: Optional["AlfalfaNode"] = None,
     ):
@@ -176,19 +164,20 @@ class DecisionNode(AlfalfaNode):
         self.left.initialise(depth + 1, init_func)
         self.right.initialise(depth + 1, init_func)
 
-    def __call__(self, x: np.ndarray, allow_not_initialised=False):
-        if self.threshold is None and allow_not_initialised:
-            # raise ValueError("This node is not initialised.")
-            return np.full((x.shape[0],), self.left(x))
+    def __call__(self, x: Shaped[np.ndarray, "N D"]) -> Shaped[np.ndarray, "N"]:
+        if self.threshold is None or self.var_idx is None:
+            raise ValueError("This node is not initialised.")
 
         var = x[:, self.var_idx]
         if self.var_idx in self.cat_idx:
             # categorical - check if value is in subset
-            return np.where(np.isin(var, self.threshold), self.left(x), self.right(x))
+            # TODO: implement subset
+            return np.where(np.equal(var, self.threshold), self.left(x), self.right(x))
         else:
             # continuous - check if value is less than threshold
+            # TODO: confirm that this `lt` sign shouldn't be `le`
             return np.where(
-                var <= self.threshold,
+                var < self.threshold,
                 self.left(x),
                 self.right(x),
             )
@@ -240,7 +229,7 @@ class DecisionNode(AlfalfaNode):
 
 
 class AlfalfaTree:
-    def __init__(self, height=3, root: Optional[AlfalfaNode] = None):
+    def __init__(self, height=0, root: Optional[AlfalfaNode] = None):
         if root is not None:
             self.root = root
         else:
@@ -278,7 +267,9 @@ class AlfalfaTree:
             depth += 1
         return nodes_by_depth
 
-    def gram_matrix(self, x1: np.ndarray, x2: np.ndarray):
+    def gram_matrix(
+        self, x1: Shaped[np.ndarray, "N D"], x2: Shaped[np.ndarray, "M D"]
+    ) -> Float[np.ndarray, "N M"]:
         if isinstance(self.root, LeafNode):
             return np.ones((x1.shape[-2], x2.shape[-2]), dtype=float)
         x1_leaves = self(x1)
@@ -289,7 +280,14 @@ class AlfalfaTree:
         )
         return sim_mat
 
-    def __call__(self, x):
+    def get_leaf_vectors(
+        self, x: Shaped[np.ndarray, "N D"]
+    ) -> Float[np.ndarray, "N B"]:
+        x_leaves = self(x)
+        all_leaves = np.array(self.root.child_leaves)
+        return (np.equal(x_leaves[:, None], all_leaves[None, :])).astype(float)
+
+    def __call__(self, x: Shaped[np.ndarray, "N D"]) -> Shaped[np.ndarray, "N"]:
         if isinstance(self.root, DecisionNode):
             return self.root(x)
         else:
@@ -336,7 +334,9 @@ class AlfalfaForest:
         for tree in self.trees:
             tree.initialise(domain, init_func)
 
-    def gram_matrix(self, x1: np.ndarray, x2: np.ndarray):
+    def gram_matrix(
+        self, x1: Shaped[np.ndarray, "N D"], x2: Shaped[np.ndarray, "M D"]
+    ) -> Float[np.ndarray, "N M"]:
         x1_leaves = np.stack([tree(x1) for tree in self.trees], axis=-1)
         x2_leaves = np.stack([tree(x2) for tree in self.trees], axis=-1)
 
