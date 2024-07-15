@@ -27,6 +27,7 @@ lightgbm = "^4.3.0"
 botorch = "^0.9.5"
 beartype = "^0.17.2"
 ucimlrepo = "^0.0.6"
+cython = "^3.0.10"
 
 
 [tool.poetry.group.dev.dependencies]
@@ -40,5 +41,5 @@ pytest-benchmark = "^4.0.0"
 addopts = "--benchmark-storage=benchmarks/results --benchmark-autosave --jaxtyping-packages=alfalfa,beartype.beartype"
 
 [build-system]
-requires = ["poetry-core"]
+requires = ["poetry-core", "Cython"]
 build-backend = "poetry.core.masonry.api"
